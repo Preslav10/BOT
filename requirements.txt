@@ -1,0 +1,14 @@
+# Core
+numpy
+opencv-python>=4.7.0
+onnxruntime>=1.15.1
+
+# AI / Vision
+mediapipe>=0.10.0
+
+
+# Utilities
+PyYAML>=6.0
+
+# YOLO (Ultralytics, optional training)
+ultralytics>=8.1.0
