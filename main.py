@@ -1,14 +1,12 @@
 import cv2
 
-from vision.detector import detect
-from vision.tracker import Tracker
-from vision.depth import estimate_depth
-from vision.face_detector import detect_faces
-from vision.face_recognition_module import load_database, recognize
+from object_memory import ObjectMemory
+from detector import detect_objects
+from depth import estimate_depth
 
 
-tracker = Tracker()
-face_db = load_database()
+memory = ObjectMemory(max_age=15)
+
 
 cap = cv2.VideoCapture(0)
 
@@ -20,61 +18,59 @@ while True:
     if not ret:
         break
 
-    detections = detect(frame)
 
-    detections = tracker.update(detections)
-
-    depth_map = estimate_depth(frame)
+    detections = detect_objects(frame)
 
 
     for det in detections:
 
-        x1,y1,x2,y2 = det["box"]
-        track_id = det["track_id"]
+        label = det["label"]
+        x, y, w, h = det["box"]
 
-        cv2.rectangle(frame,(x1,y1),(x2,y2),(0,255,0),2)
+        center = (int(x + w / 2), int(y + h / 2))
 
-        cx = (x1+x2)//2
-        cy = (y1+y2)//2
-
-        depth_value = depth_map[cy,cx]
-
-        label = f"id:{track_id} d:{depth_value:.2f}"
-
-        # only check faces inside this object
-        person_crop = frame[y1:y2,x1:x2]
-
-        faces = detect_faces(person_crop)
-
-        for (fx,fy,fw,fh) in faces:
-
-            face = person_crop[fy:fy+fh, fx:fx+fw]
-
-            name,score = recognize(face,face_db)
-
-            if name is not None:
-
-                label += f" {name}"
-
-        cv2.putText(
-            frame,
-            label,
-            (x1,y1-10),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0,255,0),
-            2
-        )
+        depth = estimate_depth(frame, center)
 
 
-    depth_vis = (depth_map*255).astype("uint8")
+        memory.update_object(label, center, depth)
 
-    depth_vis = cv2.applyColorMap(depth_vis, cv2.COLORMAP_MAGMA)
 
-    cv2.imshow("Robot Vision",frame)
-    cv2.imshow("Depth",depth_vis)
+        cv2.rectangle(frame, (x, y), (x + w, y + h), (0,255,0), 2)
 
-    if cv2.waitKey(1)==27:
+        text = f"{label} {depth:.2f}m"
+
+        cv2.putText(frame, text,
+                    (x, y - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0,255,0),
+                    2)
+
+
+    objects = memory.get_objects()
+
+
+    y_offset = 30
+
+    for label, data in objects.items():
+
+        info = f"{label} depth:{data['depth']:.2f}"
+
+        cv2.putText(frame,
+                    info,
+                    (10, y_offset),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (255,0,0),
+                    2)
+
+        y_offset += 25
+
+
+    cv2.imshow("Robot Vision", frame)
+
+
+    if cv2.waitKey(1) & 0xFF == 27:
         break
 
 
