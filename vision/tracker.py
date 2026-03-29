@@ -1,31 +1,46 @@
+
 import numpy as np
-from collections import defaultdict, deque
-import cv2
 
-MEMORY_SIZE = 50
-object_memory = defaultdict(lambda: deque(maxlen=MEMORY_SIZE))
-next_id = 0
+class Tracker:
+    def __init__(self):
+        self.next_id = 0
+        self.tracks = {}
 
-def extract_feature(crop):
-    crop = cv2.resize(crop, (32,32))
-    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-    hist = cv2.calcHist([hsv], [0,1], None, [8,8], [0,180,0,256])
-    cv2.normalize(hist, hist)
-    return hist.flatten()
+    def _iou(self, a, b):
+        x1=max(a[0],b[0])
+        y1=max(a[1],b[1])
+        x2=min(a[2],b[2])
+        y2=min(a[3],b[3])
 
-def match_object(feature):
-    global next_id
-    best_id, best_sim = None, 0
+        inter=max(0,x2-x1)*max(0,y2-y1)
+        areaA=(a[2]-a[0])*(a[3]-a[1])
+        areaB=(b[2]-b[0])*(b[3]-b[1])
+        union=areaA+areaB-inter
 
-    for obj_id, feats in object_memory.items():
-        for f in feats:
-            sim = np.dot(feature, f) / (np.linalg.norm(feature)*np.linalg.norm(f)+1e-6)
-            if sim > best_sim:
-                best_sim, best_id = sim, obj_id
+        return inter/union if union>0 else 0
 
-    if best_sim > 0.7:
-        return best_id
+    def update(self, detections):
+        updated = {}
 
-    new_id = next_id
-    next_id += 1
-    return new_id
+        for det in detections:
+            box = det["box"]
+            best_id = None
+            best_iou = 0
+
+            for tid, tbox in self.tracks.items():
+                iou = self._iou(box, tbox)
+                if iou > best_iou:
+                    best_iou = iou
+                    best_id = tid
+
+            if best_iou > 0.3:
+                updated[best_id] = box
+                det["track_id"] = best_id
+            else:
+                tid = self.next_id
+                self.next_id += 1
+                updated[tid] = box
+                det["track_id"] = tid
+
+        self.tracks = updated
+        return detections
