@@ -1,72 +1,42 @@
-import time
-
-
 class BehaviorSystem:
+
     def __init__(self):
         self.state = "IDLE"
-        self.last_interaction_time = 0
 
-    def update(self, objects, memory):
-        current_time = time.time()
+    def decide(self, objects, faces, memory):
+        actions = []
 
-        # Проверка дали има човек
-        person = None
+        # 📏 Реакция към дистанция
         for obj in objects:
             if obj["label"] == "person":
-                person = obj
-                break
+                distance = obj.get("distance", 100)
 
-        # -------------------------
-        # STATE MACHINE
-        # -------------------------
+                if distance < 40:
+                    actions.append(("state", "AVOIDING"))
+                    actions.append(("speak", "Моля отстъпи назад"))
+                else:
+                    actions.append(("state", "INTERACTING"))
 
-        if self.state == "IDLE":
-            if person:
-                self.state = "INTERACTING"
-                return {
-                    "action": "speak",
-                    "text": "Здравей човек"
-                }
+        # 👤 Реакция към лица
+        for face in faces:
+            if face["name"] != "Unknown":
+                actions.append(("speak", f"Здравей, {face['name']}"))
             else:
-                self.state = "SEARCHING"
+                actions.append(("speak", "Кой си ти?"))
 
-        elif self.state == "SEARCHING":
-            if person:
-                self.state = "INTERACTING"
-                return {
-                    "action": "speak",
-                    "text": "Открих човек"
-                }
+        return self.prioritize(actions)
 
-        elif self.state == "INTERACTING":
-            if person:
-                distance = person["depth"]
+    def prioritize(self, actions):
+        priority_map = {
+            "AVOIDING": 3,
+            "INTERACTING": 2,
+            "IDLE": 1
+        }
 
-                # ако е твърде близо → избягване
-                if distance < 50:
-                    self.state = "AVOIDING"
-                    return {
-                        "action": "speak",
-                        "text": "Твърде близо си"
-                    }
+        def get_priority(action):
+            if action[0] == "state":
+                return priority_map.get(action[1], 0)
+            return 0
 
-                # cooldown за говорене
-                if current_time - self.last_interaction_time > 5:
-                    self.last_interaction_time = current_time
-                    return {
-                        "action": "speak",
-                        "text": "Как си?"
-                    }
-
-            else:
-                self.state = "SEARCHING"
-
-        elif self.state == "AVOIDING":
-            if not person or person["depth"] > 80:
-                self.state = "IDLE"
-                return {
-                    "action": "speak",
-                    "text": "Добре, вече има място"
-                }
-
-        return None
+        actions.sort(key=get_priority, reverse=True)
+        return actions

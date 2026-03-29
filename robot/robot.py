@@ -1,11 +1,19 @@
+import sys
+import os
+
+# 👉 FIX за module import
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import cv2
 import logging
+import time
 
 from vision.detector import detect
 from vision.depth import estimate_depth
 from memory.object_memory import ObjectMemory
 from ai.behavior import BehaviorSystem
 from voice.text_to_speech import speak
+from vision.face_recognition_module import FaceRecognizer
 
 logging.basicConfig(level=logging.INFO)
 
@@ -15,6 +23,13 @@ class Robot:
         self.cap = cv2.VideoCapture(camera_index)
         self.memory = ObjectMemory()
         self.behavior = BehaviorSystem()
+
+        # 👤 Face Recognition
+        self.face_recognizer = FaceRecognizer()
+
+        # 🧠 Learning control
+        self.last_saved_time = 0
+        self.SAVE_INTERVAL = 5  # секунди
 
     def perceive(self):
         ret, frame = self.cap.read()
@@ -26,25 +41,54 @@ class Robot:
         detections = detect(frame)
         depth_map = estimate_depth(frame)
 
-        return frame, (detections, depth_map)
+        faces = self.face_recognizer.recognize(frame)
 
-    def think(self, detections, depth_map):
+        return frame, (detections, depth_map, faces)
+
+    # ✅ FIXED FUNCTION (тук беше грешката)
+    def save_new_face(self, face_img):
+        if face_img is None:
+            return
+
+        current_time = time.time()
+
+        if current_time - self.last_saved_time < self.SAVE_INTERVAL:
+            return
+
+        filename = f"faces/person_{int(time.time())}.jpg"
+
+        try:
+            # 🔥 FIX: DeepFace → uint8
+            if face_img.dtype != 'uint8':
+                face_img = (face_img * 255).astype("uint8")
+
+            # RGB → BGR
+            face_img = cv2.cvtColor(face_img, cv2.COLOR_RGB2BGR)
+
+            cv2.imwrite(filename, face_img)
+
+            logging.info(f"New face saved: {filename}")
+
+            self.last_saved_time = current_time
+
+        except Exception as e:
+            logging.error(f"Error saving face: {e}")
+
+    def think(self, detections, depth_map, faces):
         enriched_objects = []
 
         for det in detections:
             x1, y1, x2, y2 = det["box"]
             label = det["label"]
 
-            # 🛡️ безопасно изрязване
             h, w = depth_map.shape[:2]
-            x1 = max(0, min(x1, w - 1))
-            x2 = max(0, min(x2, w))
-            y1 = max(0, min(y1, h - 1))
-            y2 = max(0, min(y2, h))
+            x1 = max(0, min(int(x1), w - 1))
+            x2 = max(0, min(int(x2), w))
+            y1 = max(0, min(int(y1), h - 1))
+            y2 = max(0, min(int(y2), h))
 
             roi = depth_map[y1:y2, x1:x2]
 
-            # 🛡️ защита от празни региони
             if roi.size == 0:
                 depth = 0
             else:
@@ -56,7 +100,6 @@ class Robot:
                 "depth": depth
             }
 
-            # 🧠 запис в паметта
             self.memory.update_object(
                 label=obj["label"],
                 position=obj["bbox"],
@@ -65,7 +108,14 @@ class Robot:
 
             enriched_objects.append(obj)
 
-        # 🧠 behavior system
+        # 👤 Face logic + learning
+        for face in faces:
+            if face["name"] != "Unknown":
+                speak(f"Здравей, {face['name']}")
+            else:
+                speak("Кой си ти?")
+                self.save_new_face(face["face_img"])
+
         decision = self.behavior.update(enriched_objects, self.memory)
 
         return decision, enriched_objects
@@ -82,8 +132,59 @@ class Robot:
             speak(decision.get("text", ""))
 
         elif action == "move":
-            # TODO: реално движение (Arduino / motors)
             logging.info("Moving robot...")
+
+    def draw_objects(self, frame, objects):
+        for obj in objects:
+            x, y, w, h = obj["bbox"]
+            label = obj["label"]
+            depth = obj["depth"]
+
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+
+            text = f"{label} {depth:.2f}"
+            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+
+            cv2.rectangle(frame, (x, y - th - 10), (x + tw, y), (255, 0, 0), -1)
+
+            cv2.putText(
+                frame,
+                text,
+                (x, y - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 255),
+                2
+            )
+
+    def draw_faces(self, frame, faces):
+        h_frame, w_frame, _ = frame.shape
+
+        for face in faces:
+            x1, y1, x2, y2 = face["box"]
+
+            x1 = max(0, int(x1))
+            y1 = max(0, int(y1))
+            x2 = min(w_frame, int(x2))
+            y2 = min(h_frame, int(y2))
+
+            name = face["name"]
+
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+            (tw, th), _ = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+
+            cv2.rectangle(frame, (x1, y1 - th - 10), (x1 + tw, y1), (0, 255, 0), -1)
+
+            cv2.putText(
+                frame,
+                name,
+                (x1, y1 - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 0, 0),
+                2
+            )
 
     def run(self):
         while True:
@@ -92,29 +193,14 @@ class Robot:
             if frame is None:
                 continue
 
-            detections, depth_map = data
+            detections, depth_map, faces = data
 
-            decision, objects = self.think(detections, depth_map)
+            decision, objects = self.think(detections, depth_map, faces)
             self.act(decision)
 
-            # 🎨 визуализация
-            for obj in objects:
-                x, y, w, h = obj["bbox"]
-                label = obj["label"]
-                depth = obj["depth"]
+            self.draw_objects(frame, objects)
+            self.draw_faces(frame, faces)
 
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                cv2.putText(
-                    frame,
-                    f"{label} {depth:.2f}",
-                    (x, y - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0, 255, 0),
-                    2
-                )
-
-            # 🧠 показване на state
             cv2.putText(
                 frame,
                 f"STATE: {self.behavior.state}",

@@ -1,54 +1,56 @@
-import os
-import numpy as np
 from deepface import DeepFace
+import cv2
+import os
 
-DB_PATH = "faces_db"
+class FaceRecognizer:
+    def __init__(self, db_path="faces"):
+        self.db_path = db_path
 
-def load_database():
+        if not os.path.exists(db_path):
+            os.makedirs(db_path)
 
-    db = {}
+    def recognize(self, frame):
+        results = []
 
-    for person in os.listdir(DB_PATH):
+        try:
+            detections = DeepFace.extract_faces(
+                img_path=frame,
+                detector_backend='opencv',
+                enforce_detection=False
+            )
 
-        path = os.path.join(DB_PATH, person, "embeddings.npy")
+            for face in detections:
+                x = face["facial_area"]["x"]
+                y = face["facial_area"]["y"]
+                w = face["facial_area"]["w"]
+                h = face["facial_area"]["h"]
 
-        if os.path.exists(path):
+                face_img = face["face"]
 
-            db[person] = np.load(path)
+                try:
+                    result = DeepFace.find(
+                        img_path=face_img,
+                        db_path=self.db_path,
+                        enforce_detection=False,
+                        silent=True
+                    )
 
-    return db
+                    if len(result) > 0 and len(result[0]) > 0:
+                        identity_path = result[0].iloc[0]["identity"]
+                        name = os.path.basename(identity_path).split(".")[0]
+                    else:
+                        name = "Unknown"
 
+                except:
+                    name = "Unknown"
 
-def cosine(a,b):
+                results.append({
+                    "name": name,
+                    "box": (x, y, x + w, y + h),
+                    "face_img": face_img
+                })
 
-    return np.dot(a,b)/(np.linalg.norm(a)*np.linalg.norm(b))
+        except:
+            pass
 
-
-def recognize(face_img, db):
-
-    emb = DeepFace.represent(
-        face_img,
-        model_name="Facenet",
-        enforce_detection=False
-    )[0]["embedding"]
-
-    emb = np.array(emb)
-
-    best_name=None
-    best_score=0
-
-    for name,vecs in db.items():
-
-        for v in vecs:
-
-            score = cosine(emb,v)
-
-            if score>best_score:
-
-                best_score=score
-                best_name=name
-
-    if best_score>0.6:
-        return best_name,best_score
-
-    return None,best_score
+        return results
