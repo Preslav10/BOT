@@ -40,12 +40,10 @@ class Robot:
 
         detections = detect(frame)
         depth_map = estimate_depth(frame)
-
         faces = self.face_recognizer.recognize(frame)
 
         return frame, (detections, depth_map, faces)
 
-    # ✅ FIXED FUNCTION (тук беше грешката)
     def save_new_face(self, face_img):
         if face_img is None:
             return
@@ -58,15 +56,12 @@ class Robot:
         filename = f"faces/person_{int(time.time())}.jpg"
 
         try:
-            # 🔥 FIX: DeepFace → uint8
             if face_img.dtype != 'uint8':
                 face_img = (face_img * 255).astype("uint8")
 
-            # RGB → BGR
             face_img = cv2.cvtColor(face_img, cv2.COLOR_RGB2BGR)
 
             cv2.imwrite(filename, face_img)
-
             logging.info(f"New face saved: {filename}")
 
             self.last_saved_time = current_time
@@ -97,26 +92,24 @@ class Robot:
             obj = {
                 "label": label,
                 "bbox": (x1, y1, x2 - x1, y2 - y1),
-                "depth": depth
+                "distance": depth   # 🔥 важно: behavior очаква distance
             }
 
             self.memory.update_object(
                 label=obj["label"],
                 position=obj["bbox"],
-                depth=obj["depth"]
+                depth=obj["distance"]
             )
 
             enriched_objects.append(obj)
 
-        # 👤 Face logic + learning
+        # 👤 learning (без говорене!)
         for face in faces:
-            if face["name"] != "Unknown":
-                speak(f"Здравей, {face['name']}")
-            else:
-                speak("Кой си ти?")
+            if face["name"] == "Unknown":
                 self.save_new_face(face["face_img"])
 
-        decision = self.behavior.update(enriched_objects, self.memory)
+        # ✅ ВАЖНО: подаваме faces към behavior
+        decision = self.behavior.decide(enriched_objects, faces, self.memory)
 
         return decision, enriched_objects
 
@@ -132,13 +125,13 @@ class Robot:
             speak(decision.get("text", ""))
 
         elif action == "move":
-            logging.info("Moving robot...")
+            logging.info(f"Moving: {decision.get('state')}")
 
     def draw_objects(self, frame, objects):
         for obj in objects:
             x, y, w, h = obj["bbox"]
             label = obj["label"]
-            depth = obj["depth"]
+            depth = obj["distance"]
 
             cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
 

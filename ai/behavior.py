@@ -1,42 +1,71 @@
-class BehaviorSystem:
+import time
 
+
+class Behavior:
     def __init__(self):
-        self.state = "IDLE"
+        self.last_action_time = 0
+        self.cooldown = 3  # секунди
 
-    def decide(self, objects, faces, memory):
-        actions = []
+        self.known_people = set()
 
-        # 📏 Реакция към дистанция
-        for obj in objects:
-            if obj["label"] == "person":
-                distance = obj.get("distance", 100)
+    def can_act(self):
+        return time.time() - self.last_action_time > self.cooldown
 
-                if distance < 40:
-                    actions.append(("state", "AVOIDING"))
-                    actions.append(("speak", "Моля отстъпи назад"))
-                else:
-                    actions.append(("state", "INTERACTING"))
+    def update(self, objects, faces):
+        # приоритет: лица > обекти
 
-        # 👤 Реакция към лица
+        if faces:
+            action = self.handle_faces(faces)
+            if action:
+                return action
+
+        if objects:
+            action = self.handle_objects(objects)
+            if action:
+                return action
+
+        return {"type": "idle"}
+
+    # 👤 ЛИЦА
+    def handle_faces(self, faces):
         for face in faces:
-            if face["name"] != "Unknown":
-                actions.append(("speak", f"Здравей, {face['name']}"))
+            name = face["name"]
+
+            if name == "unknown":
+                if self.can_act():
+                    self.last_action_time = time.time()
+
+                    return {
+                        "type": "speak",
+                        "text": "Здравей, кой си ти?"
+                    }
+
             else:
-                actions.append(("speak", "Кой си ти?"))
+                if name not in self.known_people and self.can_act():
+                    self.known_people.add(name)
+                    self.last_action_time = time.time()
 
-        return self.prioritize(actions)
+                    return {
+                        "type": "speak",
+                        "text": f"Здравей, {name}!"
+                    }
 
-    def prioritize(self, actions):
-        priority_map = {
-            "AVOIDING": 3,
-            "INTERACTING": 2,
-            "IDLE": 1
-        }
+        return None
 
-        def get_priority(action):
-            if action[0] == "state":
-                return priority_map.get(action[1], 0)
-            return 0
+    # 📦 ОБЕКТИ
+    def handle_objects(self, objects):
+        for obj in objects:
+            label = obj.get("label", "")
 
-        actions.sort(key=get_priority, reverse=True)
-        return actions
+            if label == "person":
+                continue
+
+            if self.can_act():
+                self.last_action_time = time.time()
+
+                return {
+                    "type": "speak",
+                    "text": f"Виждам {label}"
+                }
+
+        return None
